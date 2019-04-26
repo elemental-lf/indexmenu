@@ -23,6 +23,7 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
     var $rsort = false;
     var $nsort = false;
     var $hsort = false;
+    var $bsort = false;
 
     /**
      * What kind of syntax are we?
@@ -140,6 +141,8 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
         }
         //reverse sort
         $rsort = $this->hasOption($defaults, $opts, 'rsort');
+        //Sort namespaces together with pages
+        $bsort = $this->hasOption($defaults, $opts, 'bsort');
 
         if($sort) $jsajax .= "&sort=" . $sort;
         if($msort) $jsajax .= "&msort=" . $msort;
@@ -147,6 +150,7 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
         if($nsort) $jsajax .= "&nsort=1";
         if($hsort) $jsajax .= "&hsort=1";
         if($nopg) $jsajax .= "&nopg=1";
+        if($bsort) $jsajax .= "&bsort=1";
 
         //javascript option
         $dir = '';
@@ -258,7 +262,8 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
                 'headpage'      => $this->getConf('headpage'),
                 'hide_headpage' => $this->getConf('hide_headpage')
             ),
-            $hsort
+            $hsort,
+            $bsort,
         );
     }
 
@@ -394,10 +399,11 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
         $this->nsort = $myns[5];
         $opts        = $myns[6]; //level, nons, nopg, nss, max, js, skip_index, skip_file, headpage, hide_headpage
         $this->hsort = $myns[7];
+        $this->bsort = $myns[8];
         $data        = array();
         $js_name     = "indexmenu_".$js_opts['identifier'];
         $fsdir       = "/".utf8_encodeFN(str_replace(':', '/', $ns));
-        if($this->sort || $this->msort || $this->rsort || $this->hsort) {
+        if($this->sort || $this->msort || $this->rsort || $this->hsort || $this->bsort) {
             $this->_search($data, $conf['datadir'], array($this, '_search_index'), $opts, $fsdir);
         } else {
             search($data, $conf['datadir'], array($this, '_search_index'), $opts, $fsdir);
@@ -870,37 +876,36 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
         }
         closedir($dh);
 
-        //Collect and sort dirs
-        if($this->nsort) {
-            //collect the wanted directories in dirs_tmp
-            foreach($dirs as $dir) {
-                call_user_func_array($func, array(&$dirs_tmp, $base, $dir, 'd', $lvl, $opts));
-            }
-            //sort directories
-            usort($dirs_tmp, array($this, "_cmp"));
-            //add and search each directory
-            foreach($dirs_tmp as $dir) {
-                $data[] = $dir;
-                if($dir['return']) {
-                    $this->_search($data, $base, $func, $opts, $dir['file'], $lvl + 1);
-                }
-            }
-        } else {
-            //sort by page name
-            sort($dirs);
-            //collect directories
-            foreach($dirs as $dir) {
-                if(call_user_func_array($func, array(&$data, $base, $dir, 'd', $lvl, $opts))) {
-                    $this->_search($data, $base, $func, $opts, $dir, $lvl + 1);
-                }
-            }
-        }
-
-        //Collect and sort files
+        //Collect files
         foreach($files as $file) {
             call_user_func_array($func, array(&$files_tmp, $base, $file, 'f', $lvl, $opts));
         }
-        usort($files_tmp, array($this, "_cmp"));
+
+        //Collect the wanted directories in dirs_tmp
+        foreach($dirs as $dir) {
+            call_user_func_array($func, array(&$dirs_tmp, $base, $dir, 'd', $lvl, $opts));
+        }
+
+        //Sort everything
+        if ($this->bsort) {
+            //Merge and sort files and directories together
+            $items = array_merge($dirs_tmp, $files_tmp);
+            usort($items, array($this, "_cmp"));
+        } else {
+            //Sort files
+            usort($files_tmp, array($this, "_cmp"));
+            //Sort directories
+            usort($dirs_tmp, array($this, "_cmp"));
+            $items = $dirs_tmp;
+        }
+        
+        //Add item and search each directory
+        foreach($items as $item) {
+            $data[] = $item;
+            if($item['type'] != 'f' && $item['return']) {
+                $this->_search($data, $base, $func, $opts, $item['file'], $lvl + 1);
+            }
+        }
 
         //count added items
         $added = count($data) - $count;
@@ -909,7 +914,7 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
             //remove empty directory again, only if it has not a headpage associated
             $v = end($data);
             if(!$v['hns']) array_pop($data);
-        } else {
+        } elseif (!$this->bsort) {
             //add files to index
             $data = array_merge($data, $files_tmp);
         }
@@ -944,8 +949,8 @@ class syntax_plugin_indexmenu_indexmenu extends DokuWiki_Syntax_Plugin {
         $sort = false;
         $page = false;
         if($item['type'] == 'd' || $item['type'] == 'l') {
-            //Fake order info when nsort is not requested
-            ($this->nsort) ? $page = $item['hns'] : $sort = 0;
+            //Fake order info when neither nsort nor bsort are requested
+            ($this->nsort || $this->bsort) ? $page = $item['hns'] : $sort = $item['file'];
         }
         if($item['type'] == 'f') $page = $item['id'];
         if($page) {
